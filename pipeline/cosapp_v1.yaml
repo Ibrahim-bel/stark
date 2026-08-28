@@ -1,0 +1,990 @@
+meta:
+  schema_version: "2.0"
+  session_id: "cosapp_v1"
+  description: >
+    CoSApp / CoSApp-Turbo technical documentation.
+    Python multidisciplinary simulation framework (CoSApp) and its
+    turbomachinery extension (CoSApp-Turbo). Covers API reference,
+    design patterns, aerodynamics mean-line models, B-spline geometry,
+    CAD export and solver/optimization workflows.
+
+domain:
+  name: "CoSApp"
+  description: >
+    CoSApp is a Python framework for multidisciplinary system simulation.
+    CoSApp-Turbo extends it with turbomachinery components: compressors,
+    turbines, fans, meridional channels, B-spline blade geometry and
+    mean-line aerodynamic solvers.
+  language: "en"
+  domain_vocabulary:
+    - CoSApp
+    - CoSApp-Turbo
+    - ChannelAeroSolverMeridian
+    - FluidMachineryBase
+    - BladeMechanicalPost2
+    - ThicknessModifierBase
+    - extend_rows_3d
+    - build_cad_dict
+    - json_dump_trb_ax
+    - Extend2dMode
+    - velocity triangle
+    - meridian framework
+    - B-spline
+    - FluidTotalPort
+    - NonLinearSolver
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PROMPTS
+# One string per LLM instruction block.
+# Variables between {{ }} are placeholders expanded at runtime.
+# ─────────────────────────────────────────────────────────────────────────────
+prompts:
+  qa_evaluator: |
+    You are a quality reviewer for a CoSApp / CoSApp-Turbo RAG evaluation benchmark.
+
+    You receive a generated (question, answer) pair and the two documentation chunks
+    used to produce it. Evaluate the pair on THREE independent criteria:
+
+    ### Criterion 1 – multi_hop_necessity (0.0 – 1.0)
+    Ask yourself: can the question be answered from <context_1hop> ALONE,
+    without reading <context_2hop>? And vice-versa?
+      • score ≥ 0.7  : question genuinely requires BOTH contexts.
+      • score < 0.5  : question is answerable from a single context.
+
+    ### Criterion 2 – grounding_score (0.0 – 1.0)
+    Does the answer contain claims absent from both provided contexts
+    (hallucinated class names, method signatures, parameter values)?
+      • score ≥ 0.7  : answer is fully grounded in the contexts.
+      • score < 0.5  : answer contains at least one hallucinated statement.
+
+    ### Criterion 3 – specificity_score (0.0 – 1.0)
+    Does the question use precise CoSApp/CoSApp-Turbo terminology
+    (class names, method names, port names) rather than vague phrases
+    like 'the system', 'the method', 'the component'?
+      • score ≥ 0.7  : question names specific CoSApp identifiers.
+      • score < 0.5  : question is generic, no domain-specific identifier.
+
+    ### passed
+    Set passed=True only if ALL THREE scores are >= the threshold (0.6 by default).
+    You do not know the threshold – just score each criterion honestly.
+
+    ### feedback
+    If passed=False: one sentence (≤ 30 words) citing the MOST IMPORTANT failure.
+    Start with the criterion name: e.g. 'multi_hop: question answerable from context 1 alone –'.
+    If passed=True: return an empty string.
+
+  query_answer_generation: |
+    You are generating evaluation questions for a Retrieval-Augmented Generation (RAG)
+    benchmark focused on the CoSApp Python simulation framework and its turbomachinery
+    extension CoSApp-Turbo.
+
+    Given:
+      • A **persona** (the type of engineer asking the question)
+      • A list of **themes** (key technical concepts shared between the two segments)
+      • A **query_style** ('Perfect grammar' or 'Web search like queries')
+      • A **query_length** (long / medium / short)
+      • A **question_type** specifying the cognitive relationship to exploit between the two segments:
+          - integration      : the question requires combining data-flow or connection info from both segments
+          - comparison       : the question contrasts two elements described in the segments
+          - design_rationale : the question asks WHY a design choice was made (one segment explains the other)
+          - implementation   : the question asks HOW to use or configure something using both segments
+          - enumeration      : the question expects a list of steps, ports, or parameters from both segments
+          - factual          : the question expects a precise value, type, or parameter name
+      • Two **context segments** tagged <1-hop> and <2-hop>
+
+    ### Task
+    1. **Generate a Multi-Hop Query**: Craft a question that requires combining information
+    from BOTH context segments. The question MUST:
+       - Use the themes as guidance about what the two segments SHARE; do NOT
+    simply restate them. Naming the shared concept makes one segment
+    self-sufficient and turns the item into a single-hop lookup.
+       - Use precise CoSApp or CoSApp-Turbo terminology (class names, method names, port
+    types, solver names) where present in the context.
+       - Match the requested style and length
+    (long ≥ 20 words, medium 10-19 words, short ≤ 9 words).
+       - Match the **question_type** specified – exploit the indicated cognitive relationship.
+       - Be answerable ONLY by reading both segments together.
+    2. **Generate a Reference Answer**: Concise, technically accurate, grounded strictly
+    in the provided context. Do NOT add information absent from the context.
+
+    ### Style guide
+      • 'Perfect grammar' – complete grammatical question ending with '?'
+      • 'Web search like queries' – short keyword query, no question mark
+
+    ### What to avoid
+      - Do NOT generate trivial single-hop questions answerable from one segment alone.
+      - Do NOT hallucinate class names or method signatures not present in the context.
+      - Do NOT use vague wording like 'the system' without naming the CoSApp class.
+
+  no_context_system: |
+    You are an expert on CoSApp (a Python multidisciplinary system-simulation framework)
+    and its turbomachinery extension CoSApp-Turbo.
+    Answer the question concisely and accurately based solely on your training knowledge.
+    If you are not sure, say so explicitly.
+
+  single_context_system: |
+    You are an expert on CoSApp (a Python multidisciplinary system-simulation framework)
+    and its turbomachinery extension CoSApp-Turbo.
+    Answer the question using ONLY the provided context. Be concise and technically accurate.
+    If the context does not contain enough information to answer fully, say explicitly what
+    is missing.
+
+  relation_validator: |
+    You are a knowledge graph quality reviewer for CoSApp, a Python simulation
+    framework, and its turbomachinery extension CoSApp-Turbo.
+
+    You receive a batch of proposed SEMANTIC RELATIONS between documentation chunks.
+    Each relation was created automatically. For EACH relation, decide whether it
+    is GENUINELY RELIABLE.
+
+    ### Evaluation method – use BOTH signals, they must both agree:
+
+    Signal 1 – KEYPHRASES: Are the shared keyphrases domain-specific?
+      Reliable: class names (ChannelAeroSolverMeridian), method names (extend_rows_3d),
+    technical terms (velocity triangle, meridian framework).
+      Unreliable: generic programming words (setup, compute, default, output, value).
+
+    Signal 2 – CONTENT: Do both chunks genuinely discuss the same technical concept
+    or have a real technical dependency? Read both carefully.
+      Reliable: both chunks describe the same class, workflow, or technical mechanism.
+      Unreliable: chunks discuss unrelated topics despite sharing words.
+
+    ### Decision rule (strict AND):
+      is_reliable = True  only if BOTH signals are reliable.
+      is_reliable = False if EITHER signal fails.
+
+    ### Output
+    - Exactly one verdict per relation_id, same order.
+    - confidence ∈ [0.0, 1.0].
+    - reason: one sentence (max 25 words) citing which signal failed or confirmed.
+    - Default is_reliable=True when confidence < 0.6 (insufficient evidence to reject).
+
+  doc_theme: |
+    You are analyzing a technical documentation page from CoSApp
+    (a Python simulation framework) or CoSApp-Turbo (turbomachinery extension).
+
+    The document is provided as a structured preview: section headings followed by
+    short excerpts. Read it carefully and extract 3 to 5 SPECIFIC TECHNICAL THEMES.
+
+    Each theme must be:
+      - Domain-specific: a concrete technical concept
+    (e.g. 'meridian aerodynamic solver', 'B-spline blade geometry',
+    'velocity triangle computation'), NOT generic
+    (e.g. 'Python class', 'configuration', 'data processing').
+      - Discriminative: something that distinguishes this document from others.
+      - Grounded in the content: directly present in the excerpt, not inferred.
+
+    For each theme, write one sentence in 'description' explaining what specific
+    aspect of the theme this document covers.
+    Return the doc_id unchanged.
+
+  cross_doc_map: |
+    You receive a compact theme registry for CoSApp / CoSApp-Turbo documentation.
+    Each entry is a technical theme name and the list of documents where it was extracted.
+
+    Your task: identify BRIDGE THEMES – technical concepts that genuinely appear in
+    MULTIPLE documents (≥2 distinct doc_ids).
+
+    Rules:
+      1. Merge entries whose theme names express the same concept with different wording
+         (e.g. 'velocity triangle at rotor inlet' and 'velocity triangle inputs' →
+         'velocity triangle'). Pick the clearest, most general name.
+      2. After merging, accumulate all doc_ids from the merged entries.
+      3. Keep only bridges that span ≥2 distinct documents.
+      4. Reject generic themes ('Python API', 'configuration', 'data processing').
+      5. Be conservative: prefer fewer, high-quality bridges over many weak ones.
+
+    For each bridge, write a one-sentence description explaining what the concept is
+    and why it is technically relevant across documents.
+    Return an empty bridges list if no genuine cross-document bridge exists.
+
+  chunk_locator: |
+    You receive documentation chunks from a single document (CoSApp / CoSApp-Turbo)
+    and a technical theme to locate within them.
+
+    Identify the 1 to 3 chunks that BEST represent or discuss this theme.
+    A chunk is relevant if its content substantively covers the theme – not just
+    mentions the theme's keywords incidentally.
+
+    Return the chunk indices (0-based integers) ordered from most to least relevant.
+    Return at most 3 indices. Return an empty list only if no chunk is genuinely relevant.
+    Indices must be within [0, len(chunks)-1].
+
+  direct_pair_validator: |
+    You receive two documentation chunks (A and B) from TWO DIFFERENT documents
+    and a shared technical theme that connects them.
+    Decide whether these two chunks have a GENUINE DIRECT RELATION.
+
+    A direct relation is valid when:
+      - Both chunks genuinely and substantively discuss the shared theme
+    (not just a passing mention).
+      - A reader would benefit from reading both chunks together: B adds real value
+    to understanding A on this theme, or vice versa.
+
+    Mark is_valid=False if:
+      - One or both chunks only mention the theme incidentally.
+      - The chunks discuss the theme from entirely disconnected angles with no
+    intellectual link.
+      - The relation would add noise, not insight, to the knowledge graph.
+
+    If is_valid=True, classify the relation as ONE of:
+      elaboration    – B elaborates, details, or expands on content from A.
+      contrast       – B presents a contrasting or alternative perspective to A.
+      prerequisite   – A must be understood before B (or vice versa).
+      example_of     – B is a concrete example or application of the concept in A.
+      shared_concept – Both cover the same concept from complementary angles.
+
+    Output:
+      - is_valid: True/False
+      - confidence ∈ [0.0, 1.0]
+      - relation_type: one of the five labels above (empty string if is_valid=False).
+      - rationale: one sentence explaining the decision.
+
+  keyphrase_extractor: |
+    Extract the most technically discriminant keyphrases from the given text.
+    The text comes from CoSApp, a Python simulation framework,
+    and its turbomachinery extension CoSApp-Turbo.
+
+    ### What to extract (in priority order)
+    1. **Python class names** (CamelCase): e.g. ChannelAeroSolverMeridian,
+    BladeMechanicalPost2, ThicknessModifierBase, FluidMachineryBase.
+    2. **Method / function names** (snake_case with underscores): e.g.
+    build_cad_dict, extend_rows_3d, compute_f_out, json_dump_trb_ax.
+    3. **Composite technical terms** (multi-word, domain-specific): e.g.
+    B-spline curve, velocity triangle, leading edge radius, meridian
+    framework, Extend2dMode.ConstantPsi, channel set.
+    4. **Enum values and constants** when domain-specific (e.g.
+    Extend2dMode.Extrude, NodeType.CHUNK).
+
+    ### What to BAN (never extract these)
+    Generic programming words: setup, method, function, class, instance, attribute,
+    parameter, argument, variable, value, default, setup, compute, return,
+    object, system, child system, parent system, type, name, list, dict,
+    tuple, string, integer, float, boolean, true, false, none, null.
+    Generic English: the, and, with, from, into, this, that, these, those,
+    data, code, file, input, output, example, note, see also.
+    Single-letter or 2-character tokens. Pure numbers. Common verbs.
+
+    ### Rules
+    - Each keyphrase must appear VERBATIM in the source text (case-insensitive).
+    - Prefer specific over general: 'ChannelAeroSolverMeridian' over 'solver',
+    'build_cad_dict' over 'function', 'leading edge radius' over 'radius'.
+    - Keep original casing for identifiers (CamelCase / snake_case preserved).
+    - Multi-word terms are encouraged when they form a single concept.
+    - Return at most 10 keyphrases, sorted by discriminative power
+    (rarest / most specific first).
+    - If the text contains no technical content, return an empty list.
+
+  qualify_system: |
+    You are an expert on CoSApp framework documentation analysis.
+    Respond ONLY with a valid JSON object — no markdown, no explanation, no code fence.
+
+  qualify_user_template: |
+    Given these two CoSApp documentation segments:
+
+    <1-hop> {context_1}
+
+    <2-hop> {context_2}
+
+    For each question type below, decide if it is compatible with these two segments
+    (i.e. a meaningful question of that type CAN be generated from them together):
+
+    - integration      : do the two segments describe components that connect or exchange data?
+    - comparison       : do the two segments describe two elements that can be meaningfully contrasted?
+    - design_rationale : does one segment explain WHY something in the other was designed that way?
+    - implementation   : do both segments together explain HOW to use or configure something?
+    - enumeration      : do both segments together yield a list of steps, ports, or parameters?
+    - factual          : do both segments together yield a precise value, type, or parameter?
+
+    Return ONLY this JSON (no markdown, no extra keys):
+    {{"compatible_types": ["integration", "comparison"]}}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PERSONAS
+# ─────────────────────────────────────────────────────────────────────────────
+personas:
+  - name: "CoSApp Developer"
+    role_description: |
+      A software engineer or scientist who builds simulation systems using the CoSApp Python
+      framework. This persona is familiar with the CoSApp API (System, Port, Driver, Trigger),
+      writes custom systems by overriding setup() and compute(), connects subsystems through
+      ports and equations, and runs simulations via drivers. Questions focus on Python-level
+      implementation details, port wiring, variable scoping, inheritance patterns, and the
+      system execution cycle.
+
+      Examples of questions and answers for this persona:
+
+      Q: How does the CoSApp framework handle blade geometry extension for both rotating and
+      non-rotating blade rows, and what aerodynamic state data must be available before calling
+      the extend_3d method to ensure proper velocity triangle calculations?
+      A: The CoSApp framework handles blade geometry extension through the extend_3d method,
+      which supports two extension modes depending on whether the blade row is rotating or
+      non-rotating. For rotating blade rows (rotors), the method uses Extend2dMode.ConstantPsi,
+      which generates 3D blade geometry by computing metal angles from velocity triangle
+      calculations based on aerodynamic quantities including inlet meridional velocity
+      (fl_in.Vm), outlet meridional velocity (fl_out.Vm), flow coefficient (psi), rotational
+      speed (rpm), and inlet tangential velocity (fl_in.Vu). For non-rotating blade rows
+      (stators), the method uses Extend2dMode.Extrude, which performs a straightforward
+      geometric extrusion of the 2D blade profile across specified span positions without
+      aerodynamic correction. Before calling the extend_3d method, valid aerodynamic state
+      data must be available in self.aero, as the velocity triangle calculations depend on
+      current values of fl_in.Vm, fl_out.Vm, psi, rpm, and fl_in.Vu. The spans list should
+      include 0.0 and 1.0 to define hub and shroud sections respectively, with intermediate
+      values generating sections according to the getSectionNameFromSpan convention of the
+      Blade class. The extend_3d operation completely rebuilds the sections of the target
+      blade, discarding any previously defined section configurations.
+
+  - name: "CoSApp-Turbo Aerodynamics Engineer"
+    role_description: |
+      An aerodynamics engineer using CoSApp-Turbo to build and analyze turbomachinery
+      mean-line models. This persona works with fluid ports (FluidTotalPort, FluidStaticPort),
+      thermodynamic loss models, blade-to-blade flow calculations, and compressor/turbine
+      stage performance. Questions focus on the physical meaning of port variables, loss
+      correlations, flow path configurations, and how aerodynamic subsystems are assembled
+      and connected within CoSApp-Turbo.
+
+      Examples of questions and answers for this persona:
+
+      Q: How does the empty_ch function differ from empty_ch_in in defining transition
+      channels, and what role do the phi and gam parameters play in centrifugal compressor
+      configurations?
+      A: The empty_ch function differs from empty_ch_in in that empty_ch defines only the
+      outlet geometry, while empty_ch_in additionally defines inlet geometry, making empty_ch
+      appropriate for internal and exit transition ducts where only the downstream
+      cross-section needs to be explicitly set. In centrifugal compressor configurations like
+      imp_Vm1_rh, the phi and gam parameters are interpreted in radians and must be supplied
+      with non-zero values (such as phi = -pi/2 and gam = pi/2) to correctly represent the
+      flow direction change from axial to radial.
+
+  - name: "CoSApp-Turbo CAD and Geometry Engineer"
+    role_description: |
+      A geometry or CAD engineer who uses CoSApp-Turbo to define, manipulate, and export
+      turbomachinery channel and blade geometry. This persona works with B-spline curves and
+      surfaces (gbs library), annular sections, meridional contours, and CAD integration
+      workflows. Questions focus on geometric data structures, parametric curve definitions,
+      channel initialization functions, and the relationship between geometric parameters and
+      flow-path dimensions.
+
+      Examples of questions and answers for this persona:
+
+      Q: In the context of circular geometry modeling for turbomachinery components, how does
+      the setup method initialize the inward variables for a circular hole, and what specific
+      calculations does the compute method perform on these variables to derive the hydraulic
+      diameter and mass flow section area?
+      A: The setup method initializes the inward variables for circular geometry by registering
+      the hole's diameter (d) with a default value of 0.001 meters and the discharge
+      coefficient (Cd) with a default value of 1.0 (dimensionless). The compute method then
+      assigns the hydraulic diameter (dh) equal to the circular diameter (d), and calculates
+      the mass flow section area (mf_section) using the formula pi * 0.5 * d².
+
+  - name: "CoSApp System Architect"
+    role_description: |
+      A systems engineer responsible for designing the architecture of multi-level
+      CoSApp-Turbo simulation models. This persona assembles complex hierarchical systems by
+      connecting subsystems, pulling ports and variables to parent levels, defining governing
+      equations, and managing the flow of data across subsystem boundaries. Questions focus on
+      system composition patterns, port pulling, connection strategies, equation management,
+      and the design of reusable subsystem interfaces.
+
+      Examples of questions and answers for this persona:
+
+      Q: How does FluidStaticPortDemux decompose radial fluid property profiles using
+      FluidStaticProfilePort, and what role do the scaling and offset variables play in this
+      mux/demux pattern?
+      A: FluidStaticPortDemux decomposes a FluidStaticMeridianPort into a scalar
+      FluidStaticPort and a FluidStaticProfilePort. The FluidStaticProfilePort stores four
+      B-Spline curve variables that separate the mean value from the profile shape: scaling
+      variables (Ps_scale and Vm_scale) capture the normalized radial variation, while offset
+      variables (Ts_offset and Vu_offset) capture the additive radial variation.
+
+  - name: "Simulation and Optimization Engineer"
+    role_description: |
+      An engineer who uses CoSApp and CoSApp-Turbo to set up and run simulation campaigns,
+      design-of-experiments, and optimization loops. This persona configures RunOnceDriver and
+      NonLinearSolver drivers, defines design variables and constraints, uses recorders to
+      capture simulation history, and interprets post-processing results. Questions focus on
+      driver configuration, solver convergence, off-design simulation setup, surrogate model
+      integration, and simulation result analysis.
+
+      Examples of questions and answers for this persona:
+
+      Q: As a Simulation and Optimization Engineer setting up a CoSApp-Turbo workflow, how
+      would you use the cut_cone_formula_area function to compute the geometrical
+      cross-sectional area of an annular channel, and subsequently how does this area relate
+      to the effective mass flow section area calculation through the section and mf_section
+      methods?
+      A: The cut_cone_formula_area function calculates the lateral surface area of a truncated
+      cone using π × (r_top + r_bottom) × slant_height. The section method calls
+      cut_cone_formula_area by passing the hub and shroud points. The mf_section method then
+      projects the geometrical section area onto the plane normal to the flow direction by
+      multiplying by cos(radians(self.gam + self.phi)).
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAXONOMY
+# ─────────────────────────────────────────────────────────────────────────────
+taxonomy:
+  types:
+    - name: integration
+      description: >
+        The question requires combining data-flow or connection information from
+        both segments (e.g. how two classes interact through ports or equations).
+    - name: comparison
+      description: >
+        The question contrasts two elements, classes, modes, or approaches
+        described in the two segments.
+    - name: design_rationale
+      description: >
+        The question asks WHY a design choice was made; one segment explains the
+        reasoning behind something in the other.
+    - name: implementation
+      description: >
+        The question asks HOW to use or configure something that requires reading
+        both segments together.
+    - name: enumeration
+      description: >
+        The question expects a list of steps, ports, parameters, or conditions
+        that can only be assembled from both segments.
+    - name: factual
+      description: >
+        The question expects a precise value, type, class name, or parameter name
+        that is only determinable from both segments together.
+
+  budget:
+    integration: 0.30
+    comparison: 0.20
+    design_rationale: 0.20
+    implementation: 0.15
+    enumeration: 0.10
+    factual: 0.05
+
+  relation_to_question_types:
+    prerequisite:   ["design_rationale", "implementation"]
+    contrast:       ["comparison", "integration"]
+    elaboration:    ["integration", "implementation", "design_rationale"]
+    example_of:     ["factual", "implementation", "enumeration"]
+    shared_concept: ["integration", "comparison"]
+
+  relation_to_answer_structure:
+    prerequisite: >
+      Answer structure: (1) what <1-hop> defines or establishes;
+      (2) how <2-hop> depends on or requires that definition.
+    contrast: >
+      Answer structure: point-by-point comparison using explicit
+      'whereas' / 'unlike' / 'in contrast to' markers.
+    example_of: >
+      Answer structure: (1) the general principle or concept from one context;
+      (2) the concrete example or application from the other context.
+    elaboration: >
+      Answer structure: (1) high-level overview from one context;
+      (2) technical details or implementation specifics from the other.
+    shared_concept: >
+      Answer structure: explain how each context covers a different facet
+      of the same technical concept.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# QUERY PARAMS
+# ─────────────────────────────────────────────────────────────────────────────
+query_params:
+  styles:
+    - perfect_grammar
+    - web_search_like
+  lengths:
+    - long
+    - medium
+    - short
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KG ENRICHMENT
+# ─────────────────────────────────────────────────────────────────────────────
+kg_enrichment:
+  blacklist_words:
+    - method
+    - function
+    - class
+    - instance
+    - attribute
+    - parameter
+    - argument
+    - value
+    - default
+    - setup
+    - compute
+    - return
+    - object
+    - system
+    - type
+    - name
+    - data
+    - code
+    - input
+    - output
+    - example
+
+  blacklist_phrases:
+    - compute method
+    - setup method
+    - return value
+    - default value
+    - input parameter
+    - output attribute
+    - type attribute
+    - name attribute
+    - system object
+    - child system
+    - parent system
+    - child systems
+    - parent systems
+    - list of dictionaries
+    - parameter named value
+    - function argument
+    - class instance
+    - code example
+
+  domain_blacklist:
+    - code description
+    - output example
+    - e.g
+    - i.e
+    - cosapp
+    - numpy
+    - fl_in
+    - fl_out
+    - cosapp_turbo
+    - gbs.curve2d
+
+  regex_blacklist_patterns:
+    - "^(\\d+\\.?\\d*|[a-z0-9]{1,2}|e\\.?g\\.?|i\\.?e\\.?|etc\\.?|vs\\.?|fig\\.?|eq\\.?)$"
+
+  idf_threshold: 0.693
+  jaccard_kp_threshold: 0.6
+  cosine_sim_min: 0.6
+  cosine_sim_max: 0.9
+  cosine_anti_dup_jaccard: 0.8
+  overlap_score_threshold: 0.02
+  overlap_distance_threshold: 0.9
+  shared_keyphrase_min_count: 3
+  shared_keyphrase_min_kps: 3
+  max_keyphrases: 10
+
+  semantic_relation_types:
+    - entities_overlap
+    - keyphrases_overlap
+    - cosine_similarity
+    - shared_keyphrase
+    - agent_discovered
+
+  structural_relation_types:
+    - child
+    - next
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CHUNKING
+# ─────────────────────────────────────────────────────────────────────────────
+chunking:
+  max_tokens: 4096
+  overlap_ratio: 0.1
+  min_chunk_tokens: 50
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EVALUATION
+# ─────────────────────────────────────────────────────────────────────────────
+evaluation:
+  max_context_chars: 12000
+  qa_eval_threshold: 0.8
+  max_retry: 2
+  relation_validator_confidence_threshold: 0.5
+  discovery_min_confidence: 0.65
+  max_content_chars_agents: 4000
+  scenario_buffer_ratio: 0.50
+  max_qualify_chars: 3000
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MODEL FALLBACKS
+# ─────────────────────────────────────────────────────────────────────────────
+models:
+  fallback_haiku: "claude-haiku-4-5-20251001"
+  fallback_scoring: "gpt-4.1-mini"
+  fallback_qualify: "gpt-4.1-mini"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FEW-SHOT EXAMPLES
+# Format: list of {input: {...}, output: {...}}
+# See pipeline_config.py::deserialize_few_shots() for per-prompt schemas.
+# ─────────────────────────────────────────────────────────────────────────────
+few_shots:
+  qa_evaluator:
+    - input:
+        question: "How does the system handle the velocity triangle?"
+        context_1hop: |
+          ChannelAeroSolverMeridian > Velocity Triangle
+
+          The velocity triangle relates absolute velocity C, blade velocity U,
+          and relative velocity W. Euler equation: W_shaft = U2*Cu2 - U1*Cu1.
+        context_2hop: |
+          FluidMachineryBase > extend_rows_3d
+
+          extend_rows_3d iterates over bladed rows. The velocity triangle inputs
+          (fl_in.Vm, fl_out.Vm, psi, rpm) feed the Euler work calculation.
+        answer: >
+          The system uses the velocity triangle to relate C, U, and W,
+          applying Euler's equation to compute shaft work.
+        question_type: "integration"
+        relation_type: "prerequisite"
+      output:
+        two_hop_score: 0.40
+        groundedness_score: 0.85
+        answer_accuracy_score: 0.35
+        passed: false
+        feedback: >
+          2hop: question answerable from context_1hop alone;
+          answer_accuracy: answer does not diverge from general LLM knowledge — replace 'the system' with ChannelAeroSolverMeridian or extend_rows_3d.
+
+  query_answer_generation:
+    - input:
+        persona_name: "CoSApp-Turbo Aerodynamics Engineer"
+        themes: ["turbine"]
+        query_style: "Perfect grammar"
+        query_length: "Short"
+        context:
+          - |
+            <1-hop> The output JSON file is overwritten if it already exists.
+            The caller must ensure that the ChannelSet object is fully populated
+            with valid geometric and aerodynamic data before invoking this function,
+            as no internal validation beyond the empty-list check is performed.
+            json_dump_trb_ax serializes a turbomachinery channel set into a CAD
+            export JSON file by extracting the channel list from a ChannelSet.
+          - |
+            <2-hop> In the project, build_cad_dict is called in the test test_imp_Vm1,
+            where a Compressor instance (cmp) is passed after running its drivers.
+            The returned dictionary is then consumed by channelCadBuild.json_cad_to_gbs
+            to reconstruct the geometric B-spline representation of the machine,
+            confirming that build_cad_dict produces a fully valid and structured output
+            compatible with downstream CAD tooling. Only FanWithBPR, Turbine, and
+            Compressor instances are supported.
+      output:
+        query: >
+          How does the build_cad_dict function handle turbine systems, and what
+          structured output is produced for CAD export when a turbine's channel
+          set is processed?
+        answer: >
+          build_cad_dict handles turbine systems by dispatching to build_trb_cad_dict,
+          passing the turbine's channel set (system.ch_set) as an argument. The
+          function produces a structured JSON output containing two top-level sections:
+          'meridian_curves' (hub, mean line, and shroud B-spline data with constraints
+          and parametrization modes) and 'channel_sets' (blade geometry, aerodynamic
+          section parameters, axial positions z, and blade types). This output is
+          compatible with channelCadBuild.json_cad_to_gbs for B-spline reconstruction.
+
+    - input:
+        persona_name: "CoSApp Developer"
+        themes: ["blade"]
+        query_style: "Perfect grammar"
+        query_length: "Long"
+        context:
+          - |
+            <1-hop> extend_rows_3d is a method of FluidMachineryBase that iterates
+            over all bladed rows registered in the assembly and delegates 3D blade
+            generation to the extend_3d method, automatically determining the correct
+            extension strategy based on the aerodynamic nature of each row. The method
+            iterates over self.aero.rows_info, which yields pairs of (row_name,
+            is_rotating) for each bladed row. For each row, it evaluates the
+            is_rotating flag to select the appropriate Extend2dMode.
+          - |
+            <2-hop> Valid aerodynamic state data must be available in self.aero before
+            calling this method, as the velocity triangle calculations depend on current
+            values of fl_in.Vm, fl_out.Vm, psi, rpm, and fl_in.Vu. The extend_3d
+            operation completely rebuilds the sections of the target blade, discarding
+            any previously defined section configurations. The spans list should include
+            0.0 and 1.0 to define hub and shroud sections respectively; intermediate
+            values generate sections named according to the getSectionNameFromSpan
+            convention of the Blade class.
+      output:
+        query: >
+          How does the extend_rows_3d method automatically determine the correct
+          blade extension strategy for each bladed row in the assembly, and what
+          aerodynamic state data must be available before the extend_3d method can
+          properly generate 3D blade geometry using the ConstantPsi mode for
+          rotating blade rows?
+        answer: >
+          extend_rows_3d iterates over self.aero.rows_info, yielding (row_name,
+          is_rotating) pairs. For each row it assigns Extend2dMode.ConstantPsi when
+          is_rotating is True (rotor) or Extend2dMode.Extrude when False (stator),
+          then calls extend_3d with the row name, mode, and shared spans list.
+          Before extend_3d can generate 3D geometry in ConstantPsi mode, valid
+          aerodynamic state data must be present in self.aero: fl_in.Vm, fl_out.Vm,
+          psi, rpm, and fl_in.Vu. The spans list must include 0.0 and 1.0 for hub
+          and shroud; the operation discards any prior section configurations.
+
+  relation_validator:
+    - input:
+        relations:
+          - relation_id: 0
+            relation_type: "shared_keyphrase"
+            source_breadcrumb: "CoSApp-Turbo > Aerodynamics > ChannelSet"
+            target_breadcrumb: "CoSApp-Turbo > Solver > MeridianSolver"
+            source_content: >
+              ChannelSetAeroMeridianMultiRotor sets up a ChannelAeroSolverMeridian
+              child named 'solver' with ports fl_in and fl_out pulled up to the
+              parent system. For each (row_name, shaft_index) pair, the method
+              connects the parent's rpm_{shaft_index} inward to the solver.
+            target_content: >
+              ChannelAeroSolverMeridian computes the aerodynamic solution for a
+              single meridian channel. It receives fl_in and fl_out from the parent
+              and iterates via Newton-Raphson until convergence on mass flow.
+            shared_keyphrases:
+              - ChannelAeroSolverMeridian
+              - meridian framework
+              - fl_in
+              - fl_out
+          - relation_id: 1
+            relation_type: "keyphrases_overlap"
+            source_breadcrumb: "CoSApp > Core > SystemBase"
+            target_breadcrumb: "CoSApp-Turbo > Blades > ThicknessModifier"
+            source_content: >
+              The setup method initialises child systems and connects their ports.
+              Default values are assigned to each parameter before compute runs.
+            target_content: >
+              ThicknessModifierBase provides a default compute implementation that
+              returns the unmodified thickness distribution as output.
+            shared_keyphrases:
+              - setup
+              - compute
+              - default
+      output:
+        verdicts:
+          - relation_id: 0
+            is_reliable: true
+            confidence: 0.93
+            reason: >
+              Keyphrases are specific class/port names AND both chunks describe
+              the same solver and its ports.
+          - relation_id: 1
+            is_reliable: false
+            confidence: 0.91
+            reason: >
+              Keyphrases are generic (setup, compute) AND content describes unrelated
+              classes with no shared technical concept.
+
+  doc_theme:
+    - input:
+        doc_id: "channel_solver.md"
+        content_preview: |
+          [CoSApp-Turbo > Aerodynamics > ChannelAeroSolverMeridian]
+          ChannelAeroSolverMeridian computes the aerodynamic solution for a single
+          meridian channel. It receives fl_in and fl_out from the parent system.
+
+          [CoSApp-Turbo > Aerodynamics > Velocity Triangle]
+          The velocity triangle relates absolute velocity C, blade velocity U,
+          and relative velocity W at rotor inlet and outlet.
+
+          [CoSApp-Turbo > Aerodynamics > Convergence]
+          The Newton-Raphson solver iterates on mass flow until residuals fall
+          below the tolerance set in solver_case.
+      output:
+        doc_id: "channel_solver.md"
+        themes:
+          - name: "meridian channel aerodynamic solver"
+            description: >
+              Describes how ChannelAeroSolverMeridian computes the aerodynamic
+              solution using fl_in/fl_out ports.
+          - name: "velocity triangle at rotor inlet/outlet"
+            description: >
+              Explains the geometric relationship between absolute, blade, and
+              relative velocities.
+          - name: "Newton-Raphson convergence on mass flow"
+            description: >
+              Details the iterative convergence strategy and tolerance configuration
+              via solver_case.
+
+  cross_doc_map:
+    - input:
+        entries:
+          - theme_name: "meridian channel aerodynamic solver"
+            doc_ids: ["channel_solver.md"]
+          - theme_name: "velocity triangle at rotor inlet/outlet"
+            doc_ids: ["channel_solver.md"]
+          - theme_name: "extend_rows_3d 3D blade generation"
+            doc_ids: ["fluid_machinery.md"]
+          - theme_name: "velocity triangle inputs for extend_rows_3d"
+            doc_ids: ["fluid_machinery.md"]
+          - theme_name: "rotor sizing using velocity triangle"
+            doc_ids: ["compressor_tutorial.md"]
+          - theme_name: "extend_rows_3d usage in design pipeline"
+            doc_ids: ["compressor_tutorial.md"]
+      output:
+        bridges:
+          - name: "velocity triangle"
+            description: >
+              Relationship between absolute (C), blade (U), and relative (W) velocities
+              — defined in theory, used as inputs to extend_rows_3d, and applied for
+              rotor sizing.
+            doc_ids:
+              - channel_solver.md
+              - fluid_machinery.md
+              - compressor_tutorial.md
+          - name: "extend_rows_3d 3D blade generation"
+            description: >
+              API method that generates 3D blade geometry from velocity triangle inputs
+              — documented in the API reference and demonstrated in the compressor
+              tutorial.
+            doc_ids:
+              - fluid_machinery.md
+              - compressor_tutorial.md
+
+  chunk_locator:
+    - input:
+        theme_name: "velocity triangle at rotor inlet/outlet"
+        theme_description: >
+          Geometric relationship between absolute velocity C, blade velocity U,
+          and relative velocity W.
+        doc_id: "channel_solver.md"
+        chunks:
+          - chunk_idx: 0
+            breadcrumb: "ChannelAeroSolverMeridian > Setup"
+            excerpt: >
+              The setup method adds fl_in and fl_out ports and connects them to
+              the parent system.
+          - chunk_idx: 1
+            breadcrumb: "ChannelAeroSolverMeridian > Velocity Triangle"
+            excerpt: >
+              The velocity triangle relates absolute velocity C, blade velocity U,
+              and relative velocity W. Euler's equation: W = U2*Cu2 - U1*Cu1.
+          - chunk_idx: 2
+            breadcrumb: "ChannelAeroSolverMeridian > Convergence"
+            excerpt: >
+              Newton-Raphson iterates on mass flow. Residuals compared against
+              solver_case tolerance.
+      output:
+        best_indices: [1]
+
+  direct_pair_validator:
+    - input:
+        chunk_a:
+          breadcrumb: "CoSApp-Turbo > Theory > Velocity Triangle"
+          doc_id: "theory_guide.md"
+          content: >
+            The velocity triangle relates absolute velocity C, blade velocity U,
+            and relative velocity W at rotor inlet and outlet.
+            Euler's equation: W_shaft = U2*Cu2 - U1*Cu1.
+        chunk_b:
+          breadcrumb: "CoSApp-Turbo > API > FluidMachineryBase.extend_rows_3d"
+          doc_id: "api_reference.md"
+          content: >
+            extend_rows_3d iterates over bladed rows. The velocity triangle
+            inputs (fl_in.Vm, fl_out.Vm, psi, rpm) are fed directly into
+            the Euler work calculation performed by this method.
+        shared_theme: "velocity triangle"
+        theme_description: >
+          Geometric relationship between absolute velocity C, blade velocity U,
+          and relative velocity W.
+      output:
+        is_valid: true
+        confidence: 0.91
+        relation_type: "prerequisite"
+        rationale: >
+          The theory chunk defines the velocity triangle that extend_rows_3d requires
+          as input — A is a prerequisite to understanding B.
+    - input:
+        chunk_a:
+          breadcrumb: "CoSApp > Core > SystemBase.setup"
+          doc_id: "core_api.md"
+          content: >
+            The setup method initialises child systems and connects their ports.
+            Default values are assigned before compute runs.
+        chunk_b:
+          breadcrumb: "CoSApp-Turbo > Blades > ThicknessModifierBase"
+          doc_id: "turbo_api.md"
+          content: >
+            ThicknessModifierBase provides a default compute implementation
+            that returns the unmodified thickness distribution.
+        shared_theme: "setup and compute lifecycle"
+        theme_description: >
+          The initialization and computation lifecycle of CoSApp systems.
+      output:
+        is_valid: false
+        confidence: 0.87
+        relation_type: ""
+        rationale: >
+          Both mention setup/compute but describe unrelated classes with no
+          technical dependency — the shared theme is too generic.
+
+  keyphrase_extractor:
+    - input:
+        text: >
+          ChannelSetAeroMeridianMultiRotor is a system class that sets up
+          and manages aerodynamic channel analysis for multi-rotor
+          configurations in a meridian framework. A ChannelAeroSolverMeridian
+          child named 'solver' is added with ports fl_in, fl_out, and
+          solver_case pulled up to the parent level. For each (row_name,
+          shaft_index) pair, the method connects the parent's rpm_{shaft_index}
+          inward to the solver's {row_name}_rpm inward.
+        max_num: 10
+      output:
+        keyphrases:
+          - ChannelSetAeroMeridianMultiRotor
+          - ChannelAeroSolverMeridian
+          - aerodynamic channel analysis
+          - multi-rotor configurations
+          - meridian framework
+          - fl_in
+          - fl_out
+          - solver_case
+          - rpm_{shaft_index}
+          - shaft_index
+
+    - input:
+        text: >
+          extend_rows_3d is a method of FluidMachineryBase that iterates
+          over all bladed rows registered in the assembly and delegates
+          3D blade generation to the extend_3d method. For each row, it
+          evaluates the is_rotating flag to select Extend2dMode.ConstantPsi
+          for rotors or Extend2dMode.Extrude for stators. The velocity
+          triangle calculations depend on fl_in.Vm, fl_out.Vm, psi, rpm,
+          and fl_in.Vu.
+        max_num: 10
+      output:
+        keyphrases:
+          - extend_rows_3d
+          - FluidMachineryBase
+          - extend_3d
+          - Extend2dMode.ConstantPsi
+          - Extend2dMode.Extrude
+          - is_rotating
+          - velocity triangle
+          - bladed rows
+          - fl_in.Vm
+          - fl_out.Vm
+
+# =============================================================================
+# PIPELINE RUNNER — options (lues par pipeline/main.py, ignorées par PipelineConfig)
+# =============================================================================
+
+# ── Outils optionnels ────────────────────────────────────────────────────────
+# true = activer, false = désactiver
+tools:
+  vlm: false                  # Extraction visuelle PDF (modèle vision)
+  cosine_relations: false     # Relations cosine similarity dans le KG
+  keyphrase_relations: false  # Relations shared_keyphrase dans le KG
+  validate_relations: true    # KG Agent : élagage des relations faibles
+  discover_relations: true    # KG Agent : nouvelles relations inter-documents
+  qa_eval: false              # QA Evaluator : scoring LLM-as-judge
+  dry_run: false              # Mode test : génère 2 questions max
+
+# ── Filtres ──────────────────────────────────────────────────────────────────
+# null = tout utiliser (défaut) | liste = restreindre aux valeurs listées
+filters:
+  # Types de questions à inclure (noms définis dans taxonomy.types ci-dessus)
+  # Exemple : [implementation, comparison, design_rationale]
+  taxonomy: null
+
+  # Personas à utiliser (noms définis dans personas ci-dessus)
+  # Exemple: ["CoSApp Developer", "CoSApp-Turbo Aerodynamics Engineer"]
+  personas: null
+
+  # Longueurs de questions : long | medium | short
+  # Exemple : [long, medium]
+  lengths: null
+
+  # Styles de questions : perfect_grammar | web_search_like | misspelled | poor_grammar
+  # Exemple : [perfect_grammar]
+  styles: null

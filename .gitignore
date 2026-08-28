@@ -1,0 +1,47 @@
+# ── Benchmarks externes (hors pipeline STARK) ─────────────────────────────
+deepeval_benchmark/
+ragas_benchmark/
+
+# ── Artefacts générés (KGs précalculés, caches) ───────────────────────────
+kg_store/
+docs/markdown_docs/
+.deepeval/
+.pytest_cache/
+
+# ── Dossiers de runtime générés par l'app ─────────────────────────────────
+src/output/
+src/sessions/
+src/uploads/
+src/vendor/
+sessions/
+uploads/
+output/
+output_merged_chunks_v3/
+compare_out/
+*.log
+
+
+# ── Scripts ad hoc (hors pipeline) ────────────────────────────────────────
+select_hard_2hop.py
+enrich_figures_vlm.py
+insert_figures.py
+
+# ── Tests de modules supprimés ────────────────────────────────────────────
+tests/test_graphify_integration.py
+tests/test_rakg_integration.py
+
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# ── Secrets ───────────────────────────────────────────────────────────────
+.env
+# ── Documents source bruts (PDF) : seuls les .md convertis sont versionnés ──
+docs/_originals/
+*.pdf

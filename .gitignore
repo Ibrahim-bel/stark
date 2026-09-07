@@ -45,3 +45,4 @@ build/
 # ── Documents source bruts (PDF) : seuls les .md convertis sont versionnés ──
 docs/_originals/
 *.pdf
+docs/
